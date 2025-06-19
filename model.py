@@ -1,16 +1,18 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
+from imblearn.pipeline import Pipeline as ImbPipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
+from imblearn.over_sampling import SMOTE
 
 
 def load_datasets():
     """Load loan applications and transaction logs."""
-    loan_df = pd.read_csv("loan_applications.csv")
-    txn_df = pd.read_csv("transactions.csv")
+    loan_df = pd.read_csv("Test_prod/loan_applications.csv")
+    txn_df = pd.read_csv("Test_prod/transactions.csv")
     return loan_df, txn_df
 
 
@@ -43,17 +45,30 @@ def engineer_features(loan_df, txn_df):
     return loan_df
 
 
-def build_pipeline(numeric_features, categorical_features):
-    """Create preprocessing and modeling pipeline."""
+def build_pipeline(numeric_features, categorical_features, class_weight=None, sampling=None):
+    """Create preprocessing and modeling pipeline.
+
+    Parameters
+    ----------
+    numeric_features : list of str
+        Names of numeric columns.
+    categorical_features : list of str
+        Names of categorical columns.
+    class_weight : dict, 'balanced', or None, optional
+        Weighting strategy for the logistic regression model.
+    sampling : object, optional
+        An imblearn sampler instance like ``SMOTE`` to apply after preprocessing.
+    """
     preprocess = ColumnTransformer([
-        ("num", "passthrough", numeric_features),
+        ("num", StandardScaler(), numeric_features),
         ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features),
     ])
 
-    clf = Pipeline([
-        ("preprocess", preprocess),
-        ("model", LogisticRegression(max_iter=500, class_weight="balanced")),
-    ])
+    steps = [("preprocess", preprocess)]
+    if sampling is not None:
+        steps.append(("sampling", sampling))
+    steps.append(("model", LogisticRegression(max_iter=500, class_weight=class_weight)))
+    clf = ImbPipeline(steps)
     return clf
 
 
@@ -94,11 +109,24 @@ def train_and_evaluate(df):
         X, y, test_size=0.2, stratify=y, random_state=42
     )
 
-    model = build_pipeline(numeric_features, categorical_features)
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
+    # Approach 1: class_weight="balanced"
+    print("\nResults with class_weight='balanced':")
+    model_balanced = build_pipeline(
+        numeric_features, categorical_features, class_weight="balanced"
+    )
+    model_balanced.fit(X_train, y_train)
+    y_pred_balanced = model_balanced.predict(X_test)
+    print(classification_report(y_test, y_pred_balanced))
 
-    print(classification_report(y_test, y_pred))
+    # Approach 2: oversampling minority class using SMOTE
+    print("\nResults with SMOTE oversampling:")
+    smote = SMOTE(random_state=42)
+    model_smote = build_pipeline(
+        numeric_features, categorical_features, sampling=smote
+    )
+    model_smote.fit(X_train, y_train)
+    y_pred_smote = model_smote.predict(X_test)
+    print(classification_report(y_test, y_pred_smote))
 
 
 if __name__ == "__main__":
